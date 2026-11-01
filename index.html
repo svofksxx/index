@@ -87,6 +87,7 @@
           <span class="flex items-center gap-2"><span class="w-4 h-4 rounded-lg bg-rose-50 inline-block"></span>任务失败历史</span>
           <span class="flex items-center gap-2"><span class="w-4 h-4 rounded-lg bg-gray-100 inline-block"></span>备注</span>
         </div>
+        <p class="mt-3 text-xs text-gray-400">提示：单击日期 → 右侧分栏筛选该日任务；双击日期 → 打开备注与任务导入；点击空白处 → 取消筛选显示全部任务。</p>
       </div>
 
       <!-- ============ 右侧可收起分栏（打卡分栏） ============ -->
@@ -99,11 +100,11 @@
             <button id="sidebarClose" class="md:hidden w-9 h-9 rounded-2xl bg-white shadow-md shadow-gray-200/50 text-gray-500 hover:text-indigo-500 hover:-translate-y-0.5 active:scale-95 transition-all duration-200 items-center justify-center">✕</button>
           </div>
         </div>
-        <p class="text-xs text-gray-400 mb-4">点击日历日期可筛选当日打卡；点击其他区域取消选中</p>
+        <p class="text-xs text-gray-400 mb-4">单击日期筛选当日打卡，双击日期可编辑备注与导入任务；点击其他区域取消筛选</p>
 
         <div id="sidebarFilterBar" class="hidden mb-4 flex items-center justify-between bg-indigo-50 rounded-2xl px-4 py-2">
           <span class="text-sm text-gray-500">筛选：<span id="sidebarFilterDate" class="text-indigo-500 font-medium"></span></span>
-          <button id="sidebarClearFilter" class="text-sm text-indigo-500 hover:text-indigo-600 transition-all duration-200 font-medium">显示全部</button>
+          <span class="text-xs text-indigo-400">点击空白处取消</span>
         </div>
 
         <div id="sidebarList" class="space-y-4"></div>
@@ -373,6 +374,28 @@
     const calendarGrid = document.getElementById('calendarGrid');
     const monthTitle = document.getElementById('monthTitle');
 
+    // 日期格子的样式：默认 / 今日 / 选中（柔和主色高亮 + 柔光环，无硬边框）
+    function cellClass(date) {
+      const isToday = date === today;
+      const isSel = selectedDateFilter === date;
+      const base = 'text-left select-none min-h-[72px] md:min-h-[100px] rounded-2xl p-2 transition-all duration-200 ';
+      if (isSel) return base + 'bg-indigo-100/70 ring-2 ring-indigo-500/40 shadow-xl shadow-indigo-600/30';
+      if (isToday) return base + 'bg-indigo-50 shadow-lg shadow-indigo-200/50 hover:-translate-y-0.5';
+      return base + 'bg-white shadow-md shadow-gray-200/50 hover:-translate-y-0.5 hover:shadow-xl';
+    }
+
+    // 仅刷新选中高亮（原地改 class，不重建 DOM，保证双击事件可靠触发）
+    function updateCellHighlight() {
+      calendarGrid.querySelectorAll('[data-date]').forEach((el) => {
+        const date = el.dataset.date;
+        const isToday = date === today;
+        const isSel = selectedDateFilter === date;
+        el.className = cellClass(date);
+        const num = el.querySelector('[data-daynum]');
+        if (num) num.className = 'text-xs font-medium ' + (isSel || isToday ? 'text-indigo-600' : 'text-gray-400');
+      });
+    }
+
     function renderCalendar() {
       monthTitle.textContent = `${viewYear}年${viewMonth + 1}月`;
 
@@ -424,16 +447,9 @@
           blocks += `<div class="text-[11px] text-gray-400 px-2">+${items.length - 3}</div>`;
         }
 
-        // 选中态：柔和主色高亮 + 柔光环（无硬边框）
-        const cellCls = isSel
-          ? 'bg-indigo-100/70 ring-2 ring-indigo-500/40 shadow-xl shadow-indigo-600/30'
-          : isToday
-            ? 'bg-indigo-50 shadow-lg shadow-indigo-200/50 hover:-translate-y-0.5'
-            : 'bg-white shadow-md shadow-gray-200/50 hover:-translate-y-0.5 hover:shadow-xl';
-
         cells += `
-          <button data-date="${date}" class="text-left min-h-[72px] md:min-h-[100px] rounded-2xl p-2 transition-all duration-200 ${cellCls}">
-            <div class="text-xs font-medium ${isToday || isSel ? 'text-indigo-600' : 'text-gray-400'}">${d}</div>
+          <button data-date="${date}" class="${cellClass(date)}">
+            <div data-daynum class="text-xs font-medium ${isToday || isSel ? 'text-indigo-600' : 'text-gray-400'}">${d}</div>
             <div class="mt-1 space-y-1">${blocks}</div>
           </button>`;
       }
@@ -455,15 +471,21 @@
       renderCalendar();
     });
 
-    // 点击日期格子：进入选中状态 + 筛选分栏 + 打开备注/导入弹窗
+    // 单击日期格子：进入选中状态，并在右侧分栏筛选该日任务（不弹窗）
     calendarGrid.addEventListener('click', (e) => {
       const cell = e.target.closest('[data-date]');
       if (!cell) return;
       const date = cell.dataset.date;
       selectedDateFilter = date;
-      renderCalendar();
-      renderSidebar();
-      openDayModal(date);
+      updateCellHighlight(); // 原地更新高亮
+      renderSidebar();       // 分栏筛选当日
+    });
+
+    // 双击日期格子：打开备注 / 任务导入界面
+    calendarGrid.addEventListener('dblclick', (e) => {
+      const cell = e.target.closest('[data-date]');
+      if (!cell) return;
+      openDayModal(cell.dataset.date);
     });
 
     /* ---------- 日期编辑弹窗 ---------- */
@@ -605,12 +627,22 @@
         </div>`;
     }
 
+    // 任务是否属于某一天：与日历格子显示口径完全一致
+    // 进行中 = 当日已打卡 或 落在「开始日期 ~ 截止日期」区间内；已归档 = 仅保留当日打卡历史
+    function isTaskOnDate(t, date) {
+      const checked = (t.checkinDates || []).includes(date);
+      if (t.archived) return checked;
+      const inPlan = !!t.startDate && !!t.deadline && t.startDate <= date && date <= t.deadline;
+      return checked || inPlan;
+    }
+
     function renderSidebar() {
       // 进行中：已导入日历（有开始日期）且未归档
       const imported = state.tasks.filter((t) => t.startDate && !t.archived);
       let list = imported;
       if (selectedDateFilter) {
-        list = imported.filter((t) => (t.checkinDates || []).includes(selectedDateFilter));
+        // 筛选后直接显示当日任务，无需额外点击
+        list = imported.filter((t) => isTaskOnDate(t, selectedDateFilter));
         sidebarFilterBar.classList.remove('hidden');
         sidebarFilterDate.textContent = selectedDateFilter + (selectedDateFilter === today ? '（今天）' : '');
       } else {
@@ -626,8 +658,12 @@
         html += list.map((t) => sidebarCardHTML(t)).join('');
       }
 
-      // 历史任务（已归档：正常完成 / 任务失败）
-      const history = state.tasks.filter((t) => t.startDate && t.archived);
+      // 历史任务（已归档：正常完成 / 任务失败）— 筛选时只保留当日有打卡记录的
+      const history = state.tasks.filter((t) => {
+        if (!t.startDate || !t.archived) return false;
+        if (selectedDateFilter) return (t.checkinDates || []).includes(selectedDateFilter);
+        return true;
+      });
       if (history.length) {
         html += `<div class="pt-2">
           <h4 class="text-sm font-medium text-gray-500 mb-3 px-1">历史任务（${history.length}）</h4>
@@ -665,15 +701,11 @@
     sidebarOpenMobile.addEventListener('click', () => { mobileSheetOpen = true; applySidebar(); });
     document.getElementById('sidebarClose').addEventListener('click', () => { mobileSheetOpen = false; applySidebar(); });
     sheetBackdrop.addEventListener('click', () => { mobileSheetOpen = false; applySidebar(); });
-    document.getElementById('sidebarClearFilter').addEventListener('click', () => {
-      selectedDateFilter = null; renderCalendar(); renderSidebar();
-    });
-
     // 取消日期选中 -> 分栏恢复「全部已导入的进行中任务」
     function clearSelection() {
       if (!selectedDateFilter) return;
       selectedDateFilter = null;
-      renderCalendar();
+      updateCellHighlight();
       renderSidebar();
     }
     // 点击非日期区域（页面空白 / 分栏空白 / 其他元素）自动取消选中
